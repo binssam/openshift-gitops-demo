@@ -1,0 +1,187 @@
+# safe-demo.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-secret
+type: Opaque
+stringData:
+  MYSQL_USER: demouser
+  MYSQL_PASSWORD: demopassword
+  MYSQL_DATABASE: demodb
+  MYSQL_ROOT_PASSWORD: rootpassword
+  DB_USER: demouser
+  DB_PASS: demopassword
+  DB_NAME: demodb
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb-db
+  labels:
+    app: mariadb-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb-db
+  template:
+    metadata:
+      labels:
+        app: mariadb-db
+    spec:
+      containers:
+        - name: mariadb
+          # The public, non-root image we know your cluster allows
+          image: centos/mariadb-103-centos7
+          ports:
+            - containerPort: 3306
+          envFrom:
+            - secretRef:
+                name: demo-secret
+          volumeMounts:
+            - mountPath: /var/lib/mysql/data
+              name: db-data
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: mariadb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb-service
+spec:
+  selector:
+    app: mariadb-db
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: php-app-code
+data:
+  index.php: |
+    <?php
+    $host = getenv('DB_HOST') ?: 'mariadb-service';
+    $user = getenv('DB_USER');
+    $pass = getenv('DB_PASS');
+    $dbname = getenv('DB_NAME');
+
+    // Built-in retry logic so the UI handles the DB crash gracefully
+    $conn = null;
+    for ($i = 0; $i < 10; $i++) {
+        $conn = @new mysqli($host, $user, $pass, $dbname);
+        if (!$conn->connect_error) break;
+        sleep(2);
+    }
+    
+    if ($conn->connect_error) {
+        die("<h3 style='font-family: Arial; padding: 20px; color: #cc0000;'>Database auto-healing in progress. Please refresh this page in 5 seconds...</h3>");
+    }
+
+    $conn->query("CREATE TABLE IF NOT EXISTS messages (id INT AUTO_INCREMENT PRIMARY KEY, message VARCHAR(255))");
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['message'])) {
+        $stmt = $conn->prepare("INSERT INTO messages (message) VALUES (?)");
+        $stmt->bind_param("s", $_POST['message']);
+        $stmt->execute();
+        header("Location: /");
+        exit();
+    }
+    $result = $conn->query("SELECT * FROM messages ORDER BY id DESC");
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family: Arial, sans-serif; background: #f4f4f9; padding: 40px;">
+        <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 600px; margin: auto;">
+            <h2 style="color: #0066cc;">OpenShift 4.18 Auto-Healing Demo</h2>
+            <p>Data entered here is saved directly to a persistent MariaDB Pod.</p>
+            <form method="POST" style="display: flex; gap: 10px;">
+                <input type="text" name="message" required placeholder="Type a message..." style="flex: 1; padding: 10px;">
+                <button type="submit" style="padding: 10px 20px; background: #0066cc; color: white; border: none; cursor: pointer;">Save Data</button>
+            </form>
+            <hr style="margin: 20px 0;">
+            <ul style="list-style: none; padding: 0;">
+                <?php while($row = $result->fetch_assoc()): ?>
+                    <li style="padding: 10px; border-bottom: 1px solid #eee;"><b>ID [<?= $row['id'] ?>]:</b> <?= htmlspecialchars($row['message']) ?></li>
+                <?php endwhile; ?>
+            </ul>
+        </div>
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-web-app
+  labels:
+    app: demo-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-web
+  template:
+    metadata:
+      labels:
+        app: demo-web
+    spec:
+      containers:
+        - name: web
+          image: registry.access.redhat.com/ubi8/php-80
+          # Using bash to ensure the command executes perfectly
+          command: ["/bin/bash", "-c", "php -S 0.0.0.0:8080 -t /opt/app-root/src"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: demo-secret
+          env:
+            - name: DB_HOST
+              value: mariadb-service
+          volumeMounts:
+            - name: code-volume
+              # We mount JUST the file, leaving the directory writable!
+              mountPath: /opt/app-root/src/index.php
+              subPath: index.php 
+      volumes:
+        - name: code-volume
+          configMap:
+            name: php-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+spec:
+  selector:
+    app: demo-web
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: demo-web-route
+spec:
+  to:
+    kind: Service
+    name: web-service
+  port:
+    targetPort: 8080
