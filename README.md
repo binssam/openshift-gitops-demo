@@ -39,7 +39,35 @@ oc extract secret/openshift-gitops-cluster -n openshift-gitops --to=-
 oc get route openshift-gitops-server -n openshift-gitops -o custom-columns=URL:.spec.host
 
 # Connecting Git to OpenShift
-We need to tell Argo CD to watch your GitHub repository and sync it to your OpenShift cluster.
 
 Make sure to update the destination.namespace matches the OpenShift project you are working in.
+
+oc apply -f argo-app.yaml
+
+# Showcase the "Self Healing" feature 
+
+oc delete deployment demo-web-app
+
+# Clean up the namespace
+
+PROJECT=**<YOUR_NAMESPACE>**
+
+echo "Cleaning resources from $PROJECT"
+
+oc delete deployment --all -n $PROJECT
+oc delete svc --all -n $PROJECT
+oc delete route --all -n $PROJECT
+oc delete pvc --all -n $PROJECT
+oc delete secret --all -n $PROJECT
+oc delete configmap --all -n $PROJECT
+
+oc delete all --all -n $PROJECT
+oc delete pvc --all -n $PROJECT
+oc delete secret --all -n $PROJECT
+
+echo "Cleanup complete."
+
+oc get all -n $PROJECT
+
+
 
