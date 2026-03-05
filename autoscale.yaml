@@ -1,0 +1,64 @@
+# autoscale.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-web-app
+  labels:
+    app: demo-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-web
+  template:
+    metadata:
+      labels:
+        app: demo-web
+    spec:
+      containers:
+        - name: web
+          image: registry.access.redhat.com/ubi8/php-80
+          command: ["/bin/bash", "-c", "php -S 0.0.0.0:8080 -t /opt/app-root/src"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: demo-secret
+          env:
+            - name: DB_HOST
+              value: mariadb-service
+          volumeMounts:
+            - name: code-volume
+              mountPath: /opt/app-root/src/index.php
+              subPath: index.php
+          # NEW: Added resources so HPA can track metrics
+          resources:
+            requests:
+              cpu: "10m"     # Very low baseline (1/100th of a core)
+              memory: "50Mi"
+            limits:
+              cpu: "50m"     # Caps it so it triggers scaling quickly
+              memory: "100Mi"
+      volumes:
+        - name: code-volume
+          configMap:
+            name: php-app-code
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: demo-web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: demo-web-app
+  minReplicas: 1
+  maxReplicas: 5 # Will scale up to 5 pods under load
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50 # Trigger scaling when CPU crosses 50% of the 10m request
