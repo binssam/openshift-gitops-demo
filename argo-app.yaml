@@ -1,0 +1,20 @@
+# argo-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mariadb-php-app
+  # The application resource must live in the gitops namespace
+  namespace: openshift-gitops 
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/binssam/openshift-gitops-demo.git'
+    path: . # Looks for YAML files in the root of the repo
+    targetRevision: HEAD
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: bins-project1
+  syncPolicy:
+    automated:
+      prune: true     # If deleted in Git, delete in OpenShift
+      selfHeal: true  # If changed manually in OpenShift, revert it back to Git state
