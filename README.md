@@ -13,6 +13,8 @@ oc logs -l app=demo-web --tail=20
 
 oc get route demo-web-route -o custom-columns=URL:.spec.host
 
+# Browse the Application and add your data.
+
 oc delete pod -l app=mariadb-db
 
 # Add Resource Limits and the HPA
